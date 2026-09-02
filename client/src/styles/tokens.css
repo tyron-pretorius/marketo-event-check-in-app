@@ -1,0 +1,64 @@
+/* Workflow Pro — colors, type, spacing tokens.
+   Uses the OS/browser's native font stack (no bundled font files), so
+   there's nothing to license or ship — just this repo's brand colors. */
+
+:root {
+  --wp-black: #000000;
+  --wp-elev-1: #141414;
+  --wp-elev-2: #1e1e1e;
+
+  --wp-pink: #ff00ff;
+  --wp-pink-light: #ff8dff;
+
+  --wp-purple: #6c78d8;
+  --wp-purple-light: #b9c0ef;
+
+  --wp-white: #ffffff;
+
+  --wp-gradient: linear-gradient(135deg, #ff00ff 0%, #6c78d8 100%);
+
+  --bg: var(--wp-black);
+  --bg-elev: var(--wp-elev-1);
+  --bg-page: var(--wp-black);
+
+  --fg-1: rgba(255, 255, 255, 0.92);
+  --fg-2: rgba(255, 255, 255, 0.72);
+  --fg-3: rgba(255, 255, 255, 0.52);
+  --fg-4: rgba(255, 255, 255, 0.32);
+
+  --line: rgba(255, 255, 255, 0.1);
+  --line-strong: rgba(255, 255, 255, 0.2);
+
+  --accent: var(--wp-pink);
+  --accent-2: var(--wp-purple);
+  --accent-fg: var(--wp-black);
+
+  --success: #2ecc71;
+  --warning: #ffd84e;
+  --danger: #ff4d4d;
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-md: 0 4px 20px rgba(0, 0, 0, 0.45);
+  --shadow-lg: 0 15px 51px rgba(0, 0, 0, 0.5);
+  --shadow-glow: 0 0 60px rgba(255, 0, 255, 0.3), 0 0 120px rgba(108, 120, 216, 0.2);
+
+  --r-xs: 6px;
+  --r-sm: 10px;
+  --r-md: 16px;
+  --r-lg: 24px;
+  --r-xl: 32px;
+  --r-pill: 999px;
+
+  --s-1: 4px;
+  --s-2: 8px;
+  --s-3: 12px;
+  --s-4: 16px;
+  --s-5: 24px;
+  --s-6: 32px;
+  --s-7: 48px;
+
+  --font-display: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial,
+    sans-serif;
+  --font-body: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial,
+    sans-serif;
+}
