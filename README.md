@@ -23,8 +23,12 @@ server and in your own Marketo instance.
    folders to list recent events, or you can just paste in a Program Id
    directly. Search the list to pick the right one — this uses fuzzy
    matching, so a typo still finds the right program.
-2. **Pull Registrants** — fetches everyone currently in the Marketo program
-   and lists them under the **Registered** tab.
+2. **Pull Registrants** — fetches everyone currently Registered in the
+   Marketo program and lists them under the **Registered** tab. Re-pulling
+   later also drops anyone no longer Registered (removed from the program,
+   or their status changed) — except people already checked in, who stay
+   put no matter what Marketo says next, since a real check-in that
+   already happened is never silently erased.
 3. **Check In** — tap a registrant to move them to **Checked-In**. They're
    tagged `Registered`.
 4. **Add walk-in** (the `+` button) — check in someone who never registered.

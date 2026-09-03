@@ -57,6 +57,8 @@ router.post("/pull", async (req, res) => {
     if (req.body?.programName) state.programName = req.body.programName;
     state.lastPulledAt = timestamp();
 
+    const registeredIds = new Set(members.map((m) => String(m.id)));
+
     for (const m of members) {
       const key = String(m.id);
       const existing = state.people[key];
@@ -85,6 +87,16 @@ router.post("/pull", async (req, res) => {
           synced: false,
           syncStatus: null,
         };
+      }
+    }
+
+    // Drop anyone who's no longer Registered in Marketo — but only if
+    // they haven't been checked in yet. A checked-in person stays put
+    // regardless of what Marketo now says, so a real check-in that
+    // already happened is never silently erased from the list.
+    for (const [key, person] of Object.entries(state.people)) {
+      if (person.source === "registered" && person.status === "registered" && !registeredIds.has(key)) {
+        delete state.people[key];
       }
     }
 
