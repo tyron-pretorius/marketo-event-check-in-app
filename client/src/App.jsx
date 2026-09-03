@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
 import Fuse from "fuse.js";
-import { api } from "./api.js";
+import { api, AuthError } from "./api.js";
 import PersonRow from "./components/PersonRow.jsx";
 import WalkInModal from "./components/WalkInModal.jsx";
 import SyncModal from "./components/SyncModal.jsx";
 import EventPicker from "./components/EventPicker.jsx";
+import LoginScreen from "./components/LoginScreen.jsx";
 import Wordmark from "./components/Wordmark.jsx";
 
 function useToast() {
@@ -27,6 +28,7 @@ export default function App() {
   const [syncing, setSyncing] = useState(false);
   const [syncResult, setSyncResult] = useState(null);
   const [showPicker, setShowPicker] = useState(false);
+  const [authed, setAuthed] = useState(null); // null = unknown yet, true/false once resolved
   const [toast, setToast] = useToast();
 
   async function refresh() {
@@ -37,21 +39,36 @@ export default function App() {
   }
 
   useEffect(() => {
-    refresh().catch((err) => setToast(err.message));
+    api
+      .authStatus()
+      .then(({ required }) => {
+        if (!required) {
+          setAuthed(true);
+          return refresh();
+        }
+        return refresh()
+          .then(() => setAuthed(true))
+          .catch((err) => {
+            if (err instanceof AuthError) setAuthed(false);
+            else throw err;
+          });
+      })
+      .catch((err) => setToast(err.message));
   }, []);
 
   // Poll for changes made by other devices checking people in against the
   // same event, so nobody has to manually refresh to see teammates' work.
   useEffect(() => {
-    if (showPicker || !state?.programId) return;
+    if (!authed || showPicker || !state?.programId) return;
 
     let cancelled = false;
     const interval = setInterval(async () => {
       try {
         const s = await api.getState();
         if (!cancelled) setState(s);
-      } catch {
-        // Silent — a transient poll failure isn't worth interrupting anyone.
+      } catch (err) {
+        if (err instanceof AuthError && !cancelled) setAuthed(false);
+        // Otherwise silent — a transient poll failure isn't worth interrupting anyone.
       }
     }, 4000);
 
@@ -59,7 +76,7 @@ export default function App() {
       cancelled = true;
       clearInterval(interval);
     };
-  }, [showPicker, state?.programId]);
+  }, [authed, showPicker, state?.programId]);
 
   const people = useMemo(() => (state ? Object.values(state.people) : []), [state]);
   const registered = people.filter((p) => p.status === "registered");
@@ -150,6 +167,14 @@ export default function App() {
   }
 
   const noShowCandidates = registered.length;
+
+  if (authed === null) {
+    return <div className="app" />;
+  }
+
+  if (!authed) {
+    return <LoginScreen onSuccess={() => { setAuthed(true); refresh().catch((err) => setToast(err.message)); }} />;
+  }
 
   if (showPicker) {
     return (

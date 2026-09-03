@@ -73,6 +73,7 @@ MARKETO_PROGRAM_ID=
 MARKETO_ATTENDED_STATUS=Attended
 MARKETO_NO_SHOW_STATUS=No Show
 MARKETO_EVENTS_ROOT_FOLDER_NAME=
+APP_PASSWORD=
 ```
 
 - `MARKETO_MUNCHKIN_ID` / `MARKETO_CLIENT_ID` / `MARKETO_CLIENT_SECRET` —
@@ -95,6 +96,13 @@ MARKETO_EVENTS_ROOT_FOLDER_NAME=
   Design Studio. Leave this unset and the event picker will offer a
   manual "enter a Program Id" field instead — the app works fine without
   it.
+- `APP_PASSWORD` — optional. If set, everyone must enter this password
+  once per device before using the app. It's a single shared password
+  behind an in-memory session token — enough to keep casual passersby off
+  a laptop or an ngrok link at an event, not real security against a
+  determined attacker (no rate limiting, no hashing, and everyone's
+  logged out if the server restarts). Leave unset to disable the login
+  screen entirely.
 
 ## Run
 
