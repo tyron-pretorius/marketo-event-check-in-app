@@ -118,7 +118,46 @@ This build uses:
 | White | `#ffffff` |
 
 All of it lives in `client/src/styles/tokens.css` — swap the values there
-to reskin the app for your own org.
+to reskin the app for your own org. The header logo and favicon come from
+`client/src/assets/logo.png` (used in `Wordmark.jsx` and `index.html`) —
+swap that file and update the "Workflow Pro" text in `Wordmark.jsx` to
+put your own brand on it.
+
+## FAQ
+
+**If someone turns up without registering but they're already in
+Marketo, does it find their existing record and mark them attended?**
+Yes. Checking someone in as a walk-in only creates a local placeholder —
+it doesn't touch Marketo until you sync. At sync time, each walk-in's
+email is looked up in Marketo first; if a match exists, that existing
+lead is used and marked Attended (and added to the program if they
+weren't already a member). No duplicate record gets created.
+
+**And if they're completely new, does it create their record in Marketo
+when we sync?**
+Yes. If the email search at sync time comes back empty, a brand-new
+Marketo lead is created with the name/company/email entered at check-in,
+then marked Attended on the program.
+
+**Is Undo only before syncing, or can we still correct a check-in
+afterward?**
+Undo works at any time, but it only changes local state — it never talks
+to Marketo. Undoing before a sync is straightforward, since nothing's
+been written yet. Undoing after a sync means the person's Marketo status
+stays whatever was last synced until you sync again; do that and the
+corrected status gets pushed then. One asymmetry: undoing a **walk-in**
+removes them from the app's list entirely (they have no "registered"
+state to fall back to) — if that walk-in was already synced, the Marketo
+lead created for them still exists and still shows Attended.
+
+**Can a few staff check people in on different devices at the same time?
+Will they see each other's updates so we don't check someone in twice?**
+Yes. All devices point at the same backend server and share one source
+of truth, so you can't get duplicate check-in records — a second "Check
+In" tap on the same person just re-stamps their timestamp. Each device
+also polls for updates every 4 seconds while an event is loaded, so a
+check-in made on one phone shows up on the others shortly after, without
+anyone needing to manually refresh.
 
 ## Notes
 
