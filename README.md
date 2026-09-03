@@ -64,12 +64,16 @@ can never get silently lost — it simply waits its turn (typically
 milliseconds) rather than racing a slower operation's save.
 
 Each Marketo program also gets its own state file under
-`server/data/events/` (plus a small `active.json` pointer for whichever
-one is currently loaded) — so switching events never carries one event's
-registrants or check-ins into another, and switching back to a
-previously-loaded event picks its check-in progress back up
-automatically. Safe to delete `server/data/` entirely to start over (or
-use `POST /api/state/reset` to clear just the currently active event).
+`server/data/events/`. There is no server-side "currently active
+event" — every request names the program it means, and each device
+remembers its own current event locally (in its browser), the same way
+it remembers its own login. Switching events on one device never
+affects what any other device is looking at, switching events never
+carries one event's registrants or check-ins into another, and
+switching back to a previously-loaded event picks its check-in
+progress back up automatically. Safe to delete `server/data/` entirely
+to start over (or use `POST /api/state/reset` with a `programId` to
+clear just that one event).
 
 ## Setup
 

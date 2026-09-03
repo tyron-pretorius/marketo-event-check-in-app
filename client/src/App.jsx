@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import Fuse from "fuse.js";
-import { api, AuthError } from "./api.js";
+import { api, AuthError, getCurrentProgram } from "./api.js";
 import PersonRow from "./components/PersonRow.jsx";
 import WalkInModal from "./components/WalkInModal.jsx";
 import SyncModal from "./components/SyncModal.jsx";
@@ -39,8 +39,12 @@ export default function App() {
     }
   }
 
-  async function refresh() {
-    const s = await api.getState();
+  // Which event this refreshes is always explicit — never a shared
+  // server-side "active" program. Falls back to whatever program this
+  // device last had loaded (localStorage), so a reload picks up where
+  // this device left off without touching any other device's event.
+  async function refresh(programId = state?.programId ?? getCurrentProgram()?.id ?? null) {
+    const s = await api.getState(programId);
     setState(s);
     if (!s.programId) setShowPicker(true);
     return s;
@@ -72,7 +76,7 @@ export default function App() {
     let cancelled = false;
     const interval = setInterval(async () => {
       try {
-        const s = await api.getState();
+        const s = await api.getState(state.programId);
         if (!cancelled) setState(s);
       } catch (err) {
         if (!cancelled && err instanceof AuthError) setAuthed(false);
@@ -132,7 +136,7 @@ export default function App() {
 
   async function handleCheckIn(id) {
     try {
-      await api.checkIn(id);
+      await api.checkIn(id, state.programId);
       await refresh();
     } catch (err) {
       handleError(err);
@@ -141,7 +145,7 @@ export default function App() {
 
   async function handleUndo(id) {
     try {
-      await api.undoCheckIn(id);
+      await api.undoCheckIn(id, state.programId);
       await refresh();
     } catch (err) {
       handleError(err);
@@ -149,7 +153,7 @@ export default function App() {
   }
 
   async function handleWalkIn(form) {
-    await api.addWalkIn(form);
+    await api.addWalkIn(form, state.programId);
     await refresh();
     setShowWalkIn(false);
     setToast(`${form.firstName || form.email} checked in`);
@@ -158,7 +162,7 @@ export default function App() {
   async function handleSyncConfirm() {
     setSyncing(true);
     try {
-      const res = await api.sync();
+      const res = await api.sync(state.programId);
       setSyncResult(res.results);
       setState(res.state);
     } catch (err) {

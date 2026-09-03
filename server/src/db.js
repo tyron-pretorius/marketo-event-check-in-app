@@ -2,22 +2,24 @@ import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 
-// Each Marketo program gets its own state file, keyed by program id. This
-// is the whole fix for a real bug: if all events shared one flat "people"
-// list, switching from Event A to Event B while A's attendees were still
-// sitting in there — then hitting Sync — would mark A's people Attended
-// on B's program (and add them to B's membership in the process). Per-
-// program files make that structurally impossible: an id only ever
-// exists in the file for the event it was pulled into.
-//
-// A small "active.json" pointer tracks which program the app is
-// currently looking at, so switching back to a previously-loaded event
-// picks its check-in progress back up instead of starting over.
+// Each Marketo program gets its own state file, keyed by program id. There
+// is deliberately no server-side "currently active program" concept —
+// every request that reads or mutates state carries its own explicit
+// programId, and each device remembers its own current event client-side
+// (localStorage), the same way it remembers its own auth token. An earlier
+// version of this file kept one shared "active.json" pointer instead, which
+// caused two real incidents: (1) one device's check-in could silently land
+// in whatever program another device had most recently switched to, and
+// (2) a slow sync's own final save would re-assert its own program as
+// "active," undoing another device's switch to a different event behind
+// its back — so a device that had genuinely moved on to Event B could have
+// its next sync silently apply to Event A instead. Per-request, explicit
+// program ids make both structurally impossible: there is no shared
+// pointer left for one device's action to disturb another's.
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DATA_DIR = path.join(__dirname, "..", "data");
 const EVENTS_DIR = path.join(DATA_DIR, "events");
-const ACTIVE_FILE = path.join(DATA_DIR, "active.json");
 
 function ensureDirs() {
   if (!fs.existsSync(EVENTS_DIR)) fs.mkdirSync(EVENTS_DIR, { recursive: true });
@@ -43,27 +45,10 @@ function emptyEventState(programId) {
   };
 }
 
-// Exported so routes can compute the right lock key (see lock.js) before
-// entering a load-mutate-save critical section, without needing to load
-// the full state first.
-export function getActiveProgramId() {
-  try {
-    const raw = fs.readFileSync(ACTIVE_FILE, "utf-8");
-    return JSON.parse(raw).programId || null;
-  } catch {
-    return null;
-  }
-}
-
-function writeActiveProgramId(programId) {
-  ensureDirs();
-  fs.writeFileSync(ACTIVE_FILE, JSON.stringify({ programId: programId ? String(programId) : null }, null, 2));
-}
-
-// Loads a specific program's state by id — used when switching to (or
-// back to) an event, so its own persisted check-in progress comes with
-// it rather than whatever was previously active.
+// Loads a specific program's state by id. Every caller must know which
+// program it means — there is no "whichever one is active" fallback.
 export function loadEventState(programId) {
+  if (!programId) return emptyEventState(null);
   ensureDirs();
   const file = eventFilePath(programId);
   if (!fs.existsSync(file)) return emptyEventState(programId);
@@ -74,36 +59,17 @@ export function loadEventState(programId) {
   }
 }
 
-// Saves a program's state to its own file and marks it as the active
-// event — every other action (check-in, sync, etc.) operates on whatever
-// is currently active.
+// Saves a program's state to its own file. Never touches any other
+// program's file, and there is nothing global left to update.
 export function saveEventState(state) {
   if (!state.programId) throw new Error("Cannot save event state without a programId");
   ensureDirs();
   fs.writeFileSync(eventFilePath(state.programId), JSON.stringify(state, null, 2));
-  writeActiveProgramId(state.programId);
 }
 
-// The "current screen" state: whichever program is active, or an empty
-// no-program shell if none has been loaded yet this session.
-export function loadState() {
-  const activeId = getActiveProgramId();
-  if (!activeId) return emptyEventState(null);
-  return loadEventState(activeId);
-}
-
-// Saves back to the active program's own file — safe to call from any
-// route that already has a loaded state object, since it always carries
-// its own programId.
-export function saveState(state) {
-  saveEventState(state);
-}
-
-// Clears the active program's own check-in progress (not other events'
-// files, and not which program is active).
-export function resetState() {
-  const activeId = getActiveProgramId();
-  const fresh = emptyEventState(activeId);
-  if (activeId) saveEventState(fresh);
+// Clears one specific program's check-in progress back to empty.
+export function resetEventState(programId) {
+  const fresh = emptyEventState(programId);
+  if (programId) saveEventState(fresh);
   return fresh;
 }

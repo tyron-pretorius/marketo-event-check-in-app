@@ -1,22 +1,40 @@
 import express from "express";
-import { loadState, saveState, resetState, loadEventState, getActiveProgramId } from "../db.js";
+import { loadEventState, saveEventState, resetEventState } from "../db.js";
 import * as marketo from "../marketo.js";
 import { getLatestEventPrograms } from "../eventFolders.js";
 import { withLock } from "../lock.js";
 
-// All routes below that read-modify-write an event's state file run their
-// critical section through withLock, keyed by that event's program id.
-// Without this, a slow multi-step request (like /sync awaiting several
-// Marketo calls) can have its final save silently clobber a check-in
-// another device wrote to disk while it was still running.
-function activeLockKey() {
-  return `event:${getActiveProgramId() || "none"}`;
-}
+// Every route below that reads or mutates an event's state takes an
+// explicit programId from the request — never a shared "currently active
+// program." There is no such thing as a server-wide active event: each
+// device tracks its own current program client-side (localStorage) and
+// sends it on every request, the same way it sends its own auth token.
+//
+// An earlier version resolved a single shared "active.json" pointer
+// instead, which caused two real incidents: one device's check-in could
+// silently land in whatever program another device had most recently
+// switched to, and a slow sync's own final save would re-assert its own
+// program as "active," undoing another device's switch to a different
+// event behind its back. Explicit, per-request program ids make both
+// structurally impossible — there's no shared pointer left to disturb.
+//
+// The lock in withLock is keyed by that same programId, so two requests
+// for the *same* event still serialize (see lock.js), while requests for
+// different events never block each other.
 
 export const router = express.Router();
 
 function timestamp() {
   return new Date().toISOString();
+}
+
+function requireProgramId(req, res) {
+  const programId = req.body?.programId || req.query?.programId;
+  if (!programId) {
+    res.status(400).json({ error: "programId is required" });
+    return null;
+  }
+  return String(programId);
 }
 
 // ---------- Health / config ----------
@@ -37,11 +55,15 @@ router.get("/health", async (req, res) => {
 // ---------- State ----------
 
 router.get("/state", (req, res) => {
-  res.json(loadState());
+  const programId = req.query?.programId;
+  res.json(loadEventState(programId || null));
 });
 
 router.post("/state/reset", async (req, res) => {
-  const result = await withLock(activeLockKey(), () => resetState());
+  const programId = requireProgramId(req, res);
+  if (!programId) return;
+
+  const result = await withLock(`event:${programId}`, () => resetEventState(programId));
   res.json(result);
 });
 
@@ -61,13 +83,14 @@ router.get("/event-folders/latest", async (req, res) => {
 router.post("/pull", async (req, res) => {
   try {
     const programId = req.body?.programId || marketo.getDefaultProgramId();
+    if (!programId) return res.status(400).json({ error: "programId is required" });
 
     const result = await withLock(`event:${programId}`, async () => {
       const members = await marketo.getProgramMembers(programId);
 
-      // Load this specific program's own file — not whatever was
-      // previously active — so switching events never carries another
-      // event's people (registered or checked-in) along with it.
+      // Load this specific program's own file — never whatever another
+      // device might be looking at — so switching events never carries
+      // another event's people (registered or checked-in) along with it.
       const state = loadEventState(programId);
       state.programId = String(programId);
       if (req.body?.programName) state.programName = req.body.programName;
@@ -116,7 +139,7 @@ router.post("/pull", async (req, res) => {
         }
       }
 
-      saveState(state);
+      saveEventState(state);
       return { pulled: members.length, state };
     });
 
@@ -129,35 +152,41 @@ router.post("/pull", async (req, res) => {
 // ---------- Check-in actions ----------
 
 router.post("/checkin/:id", async (req, res) => {
-  const result = await withLock(activeLockKey(), () => {
-    const state = loadState();
+  const programId = requireProgramId(req, res);
+  if (!programId) return;
+
+  const result = await withLock(`event:${programId}`, () => {
+    const state = loadEventState(programId);
     const person = state.people[req.params.id];
     if (!person) return { status: 404, body: { error: "Person not found" } };
 
     person.status = "checked-in";
     person.checkedInAt = timestamp();
-    saveState(state);
+    saveEventState(state);
     return { status: 200, body: person };
   });
   res.status(result.status).json(result.body);
 });
 
 router.post("/checkin/:id/undo", async (req, res) => {
-  const result = await withLock(activeLockKey(), () => {
-    const state = loadState();
+  const programId = requireProgramId(req, res);
+  if (!programId) return;
+
+  const result = await withLock(`event:${programId}`, () => {
+    const state = loadEventState(programId);
     const person = state.people[req.params.id];
     if (!person) return { status: 404, body: { error: "Person not found" } };
 
     if (person.source === "walkin") {
       // Walk-ins have no registration to fall back to — undo removes them.
       delete state.people[req.params.id];
-      saveState(state);
+      saveEventState(state);
       return { status: 200, body: { removed: true } };
     }
 
     person.status = "registered";
     person.checkedInAt = null;
-    saveState(state);
+    saveEventState(state);
     return { status: 200, body: person };
   });
   res.status(result.status).json(result.body);
@@ -166,11 +195,14 @@ router.post("/checkin/:id/undo", async (req, res) => {
 // ---------- Walk-in (unregistered) check-in ----------
 
 router.post("/walkin", async (req, res) => {
+  const programId = requireProgramId(req, res);
+  if (!programId) return;
+
   const { firstName = "", lastName = "", email = "", company = "" } = req.body || {};
   if (!email) return res.status(400).json({ error: "Email is required for walk-ins" });
 
-  const result = await withLock(activeLockKey(), () => {
-    const state = loadState();
+  const result = await withLock(`event:${programId}`, () => {
+    const state = loadEventState(programId);
     const key = `walkin:${email.trim().toLowerCase()}`;
 
     if (state.people[key]) {
@@ -193,7 +225,7 @@ router.post("/walkin", async (req, res) => {
     };
 
     state.people[key] = person;
-    saveState(state);
+    saveEventState(state);
     return { status: 200, body: person };
   });
 
@@ -205,22 +237,19 @@ router.post("/walkin", async (req, res) => {
 // Still-registered (never checked in) -> "No Show"
 
 router.post("/sync", async (req, res) => {
+  const programId = requireProgramId(req, res);
+  if (!programId) return;
+
   // The whole operation — including every Marketo call it awaits — runs
-  // inside the lock. Sync used to load state once, spend several awaits
-  // talking to Marketo, then save that now-stale in-memory copy at the
-  // end. Any check-in another device completed on disk during that
-  // window got silently overwritten by sync's final save, and sync
-  // itself may have already told Marketo that person was a No-Show based
-  // on the stale snapshot — a wrong external write this app then had no
-  // record left to correct. Holding the lock for the full duration means
-  // a concurrent check-in on the same event simply waits its turn and
-  // then applies on top of whatever sync just wrote, instead of racing it.
-  const result = await withLock(activeLockKey(), async () => {
-    const state = loadState();
-    const programId = state.programId || marketo.getDefaultProgramId();
-    if (!programId) {
-      return { status: 400, body: { error: "No program id set. Pull registrants first." } };
-    }
+  // inside the lock, keyed by the explicit programId this request named.
+  // Sync used to load whatever the server considered "active" once, spend
+  // several awaits talking to Marketo, then save that now-stale copy at
+  // the end — during which another device could switch the shared
+  // pointer to a different event, and sync's own final save would flip
+  // it right back, silently sending that device's next sync to the wrong
+  // program. There is no shared pointer left for this to happen to.
+  const result = await withLock(`event:${programId}`, async () => {
+    const state = loadEventState(programId);
 
     const attendedStatus = process.env.MARKETO_ATTENDED_STATUS || "Attended";
     const noShowStatus = process.env.MARKETO_NO_SHOW_STATUS || "No Show";
@@ -279,10 +308,10 @@ router.post("/sync", async (req, res) => {
       }
 
       state.lastSyncedAt = timestamp();
-      saveState(state);
+      saveEventState(state);
       return { status: 200, body: { results, state } };
     } catch (err) {
-      saveState(state);
+      saveEventState(state);
       return { status: 400, body: { error: err.message, partialResults: results } };
     }
   });

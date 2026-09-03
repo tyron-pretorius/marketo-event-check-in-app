@@ -1,6 +1,7 @@
 const BASE = "/api";
 const TOKEN_KEY = "wp-checkin-token";
 const DEVICE_ID_KEY = "wp-checkin-device-id";
+const CURRENT_PROGRAM_KEY = "wp-checkin-current-program";
 
 export class AuthError extends Error {}
 
@@ -27,6 +28,22 @@ export function getToken() {
 export function setToken(token) {
   if (token) localStorage.setItem(TOKEN_KEY, token);
   else localStorage.removeItem(TOKEN_KEY);
+}
+
+// Which event *this device* currently has loaded — kept client-side only.
+// The server has no concept of a shared "active" program; every request
+// carries this explicitly, so one device switching events can never
+// affect what another device's actions apply to.
+export function getCurrentProgram() {
+  try {
+    return JSON.parse(localStorage.getItem(CURRENT_PROGRAM_KEY));
+  } catch {
+    return null;
+  }
+}
+
+function setCurrentProgram(id, name) {
+  localStorage.setItem(CURRENT_PROGRAM_KEY, JSON.stringify({ id: String(id), name }));
 }
 
 async function request(path, options = {}) {
@@ -62,12 +79,18 @@ export const api = {
     return token;
   },
   health: () => request("/health"),
-  getState: () => request("/state"),
+  getState: (programId) => request(programId ? `/state?programId=${encodeURIComponent(programId)}` : "/state"),
   getLatestEventFolder: (refresh) => request(`/event-folders/latest${refresh ? "?refresh=1" : ""}`),
-  pull: (programId, programName) =>
-    request("/pull", { method: "POST", body: JSON.stringify({ programId, programName }) }),
-  checkIn: (id) => request(`/checkin/${encodeURIComponent(id)}`, { method: "POST" }),
-  undoCheckIn: (id) => request(`/checkin/${encodeURIComponent(id)}/undo`, { method: "POST" }),
-  addWalkIn: (person) => request("/walkin", { method: "POST", body: JSON.stringify(person) }),
-  sync: () => request("/sync", { method: "POST" }),
+  pull: async (programId, programName) => {
+    const result = await request("/pull", { method: "POST", body: JSON.stringify({ programId, programName }) });
+    setCurrentProgram(programId, programName);
+    return result;
+  },
+  checkIn: (id, programId) =>
+    request(`/checkin/${encodeURIComponent(id)}`, { method: "POST", body: JSON.stringify({ programId }) }),
+  undoCheckIn: (id, programId) =>
+    request(`/checkin/${encodeURIComponent(id)}/undo`, { method: "POST", body: JSON.stringify({ programId }) }),
+  addWalkIn: (person, programId) =>
+    request("/walkin", { method: "POST", body: JSON.stringify({ ...person, programId }) }),
+  sync: (programId) => request("/sync", { method: "POST", body: JSON.stringify({ programId }) }),
 };
