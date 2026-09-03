@@ -40,6 +40,27 @@ export default function App() {
     refresh().catch((err) => setToast(err.message));
   }, []);
 
+  // Poll for changes made by other devices checking people in against the
+  // same event, so nobody has to manually refresh to see teammates' work.
+  useEffect(() => {
+    if (showPicker || !state?.programId) return;
+
+    let cancelled = false;
+    const interval = setInterval(async () => {
+      try {
+        const s = await api.getState();
+        if (!cancelled) setState(s);
+      } catch {
+        // Silent — a transient poll failure isn't worth interrupting anyone.
+      }
+    }, 4000);
+
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [showPicker, state?.programId]);
+
   const people = useMemo(() => (state ? Object.values(state.people) : []), [state]);
   const registered = people.filter((p) => p.status === "registered");
   const checkedIn = people.filter((p) => p.status === "checked-in");

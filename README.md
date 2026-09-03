@@ -52,10 +52,9 @@ events to start fresh (or use `POST /api/state/reset`).
 
 All devices point at the same backend server, so two phones checking in
 the same event share one source of truth — you won't get duplicate
-check-in records. There's no live push between devices, though: a device
-only re-fetches the list when it takes an action (checking someone in,
-searching, etc.), so another device's changes may not show up on your
-screen until you interact with it.
+check-in records. Each device also polls for updates every 4 seconds
+while an event is loaded, so a check-in made on one phone shows up on the
+others shortly after, without anyone needing to manually refresh.
 
 ## Setup
 
