@@ -1,5 +1,5 @@
 node_modules/
 .DS_Store
 server/.env
-server/data/event-state.json
+server/data/
 .idea/
