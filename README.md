@@ -72,7 +72,7 @@ MARKETO_CLIENT_SECRET=
 MARKETO_PROGRAM_ID=
 MARKETO_ATTENDED_STATUS=Attended
 MARKETO_NO_SHOW_STATUS=No Show
-MARKETO_EVENTS_ROOT_FOLDER_ID=
+MARKETO_EVENTS_ROOT_FOLDER_NAME=
 ```
 
 - `MARKETO_MUNCHKIN_ID` / `MARKETO_CLIENT_ID` / `MARKETO_CLIENT_SECRET` —
@@ -85,13 +85,16 @@ MARKETO_EVENTS_ROOT_FOLDER_ID=
 - `MARKETO_ATTENDED_STATUS` / `MARKETO_NO_SHOW_STATUS` — must exactly
   match the Program Member status values configured on your program's
   channel (Admin > Tags/Channels), e.g. "Attended" / "No Show".
-- `MARKETO_EVENTS_ROOT_FOLDER_ID` — optional. Enables the auto-discovery
-  event picker by pointing it at a Marketo asset folder to browse down
-  from — it looks for the most recent "YYYY" and "QN"-style subfolder
+- `MARKETO_EVENTS_ROOT_FOLDER_NAME` — optional. Enables the auto-discovery
+  event picker by pointing it at a Marketo Design Studio folder to browse
+  down from — it looks for the most recent "YYYY" and "QN"-style subfolder
   names as it descends, falling back to just listing whatever programs
-  sit directly inside if it finds neither. Leave this unset and the event
-  picker will offer a manual "enter a Program Id" field instead — the app
-  works fine without it.
+  sit directly inside if it finds neither. This is a **name**, not an id —
+  unlike programs and smart campaigns, folder ids aren't shown anywhere in
+  the Marketo UI, so copy the folder's name exactly as it appears in
+  Design Studio. Leave this unset and the event picker will offer a
+  manual "enter a Program Id" field instead — the app works fine without
+  it.
 
 ## Run
 

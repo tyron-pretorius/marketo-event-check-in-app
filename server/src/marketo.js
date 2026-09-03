@@ -176,6 +176,16 @@ export async function getFolderById(id) {
   return (json.result || [])[0] || null;
 }
 
+// Folder IDs aren't visible anywhere in the Marketo UI (unlike program and
+// smart campaign IDs, which show up in the URL) — the only practical way
+// for someone to point this app at a folder is by its name, as shown in
+// Design Studio.
+export async function getFolderByName(name) {
+  const params = new URLSearchParams({ name, type: "Folder" });
+  const json = await marketoFetch(`/rest/asset/v1/folder/byName.json?${params.toString()}`);
+  return (json.result || [])[0] || null;
+}
+
 export async function getFolderContent(id) {
   const params = new URLSearchParams({ type: "Folder", maxReturn: "200" });
   const json = await marketoFetch(`/rest/asset/v1/folder/${id}/content.json?${params.toString()}`);
