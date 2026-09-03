@@ -31,6 +31,14 @@ export default function App() {
   const [authed, setAuthed] = useState(null); // null = unknown yet, true/false once resolved
   const [toast, setToast] = useToast();
 
+  function handleError(err) {
+    if (err instanceof AuthError) {
+      setAuthed(false);
+    } else {
+      setToast(err.message);
+    }
+  }
+
   async function refresh() {
     const s = await api.getState();
     setState(s);
@@ -67,7 +75,7 @@ export default function App() {
         const s = await api.getState();
         if (!cancelled) setState(s);
       } catch (err) {
-        if (err instanceof AuthError && !cancelled) setAuthed(false);
+        if (!cancelled && err instanceof AuthError) setAuthed(false);
         // Otherwise silent — a transient poll failure isn't worth interrupting anyone.
       }
     }, 4000);
@@ -102,7 +110,7 @@ export default function App() {
       setState(res.state);
       setToast(`Pulled ${res.pulled} registrants from Marketo`);
     } catch (err) {
-      setToast(err.message);
+      handleError(err);
     } finally {
       setPulling(false);
     }
@@ -116,7 +124,7 @@ export default function App() {
       setShowPicker(false);
       setToast(`Loaded "${program.name}" — pulled ${res.pulled} registrants`);
     } catch (err) {
-      setToast(err.message);
+      handleError(err);
     } finally {
       setPulling(false);
     }
@@ -127,7 +135,7 @@ export default function App() {
       await api.checkIn(id);
       await refresh();
     } catch (err) {
-      setToast(err.message);
+      handleError(err);
     }
   }
 
@@ -136,7 +144,7 @@ export default function App() {
       await api.undoCheckIn(id);
       await refresh();
     } catch (err) {
-      setToast(err.message);
+      handleError(err);
     }
   }
 
@@ -154,7 +162,7 @@ export default function App() {
       setSyncResult(res.results);
       setState(res.state);
     } catch (err) {
-      setToast(err.message);
+      handleError(err);
       setShowSync(false);
     } finally {
       setSyncing(false);
@@ -173,7 +181,7 @@ export default function App() {
   }
 
   if (!authed) {
-    return <LoginScreen onSuccess={() => { setAuthed(true); refresh().catch((err) => setToast(err.message)); }} />;
+    return <LoginScreen onSuccess={() => { setAuthed(true); refresh().catch(handleError); }} />;
   }
 
   if (showPicker) {

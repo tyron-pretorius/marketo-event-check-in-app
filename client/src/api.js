@@ -1,7 +1,24 @@
 const BASE = "/api";
 const TOKEN_KEY = "wp-checkin-token";
+const DEVICE_ID_KEY = "wp-checkin-device-id";
 
 export class AuthError extends Error {}
+
+// A stable per-device id, generated once and kept in localStorage. Login
+// rate-limiting keys its tight 3-strikes lockout on this instead of IP —
+// event staff are typically all on one venue WiFi, which NATs everyone to
+// the same public IP, so an IP-only lockout would let one person's typo
+// lock out the whole event. This has nothing to do with a MAC address
+// (which a web server can never see — it's stripped at the first router
+// hop): it's just a random value this browser remembers for itself.
+function getDeviceId() {
+  let id = localStorage.getItem(DEVICE_ID_KEY);
+  if (!id) {
+    id = crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    localStorage.setItem(DEVICE_ID_KEY, id);
+  }
+  return id;
+}
 
 export function getToken() {
   return localStorage.getItem(TOKEN_KEY);
@@ -36,7 +53,11 @@ async function request(path, options = {}) {
 export const api = {
   authStatus: () => request("/auth-status"),
   login: async (password) => {
-    const { token } = await request("/login", { method: "POST", body: JSON.stringify({ password }) });
+    const { token } = await request("/login", {
+      method: "POST",
+      headers: { "X-Device-Id": getDeviceId() },
+      body: JSON.stringify({ password }),
+    });
     setToken(token);
     return token;
   },

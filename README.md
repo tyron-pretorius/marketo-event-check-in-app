@@ -49,9 +49,6 @@ and switch to a different event.
 Both the event picker and the people search (across either tab) use fuzzy
 matching (Fuse.js), so a typo like "Chenn" still finds "Chen".
 
-State lives in `server/data/event-state.json` — safe to delete between
-events to start fresh (or use `POST /api/state/reset`).
-
 ## Multi-device use
 
 All devices point at the same backend server, so two phones checking in
@@ -59,6 +56,20 @@ the same event share one source of truth — you won't get duplicate
 check-in records. Each device also polls for updates every 4 seconds
 while an event is loaded, so a check-in made on one phone shows up on the
 others shortly after, without anyone needing to manually refresh.
+
+Every action that reads-modifies-writes an event's state (check-in, undo,
+walk-in, pull, sync) is also serialized per event on the server, so a
+check-in landing at the exact same instant as someone else hitting Sync
+can never get silently lost — it simply waits its turn (typically
+milliseconds) rather than racing a slower operation's save.
+
+Each Marketo program also gets its own state file under
+`server/data/events/` (plus a small `active.json` pointer for whichever
+one is currently loaded) — so switching events never carries one event's
+registrants or check-ins into another, and switching back to a
+previously-loaded event picks its check-in progress back up
+automatically. Safe to delete `server/data/` entirely to start over (or
+use `POST /api/state/reset` to clear just the currently active event).
 
 ## Setup
 
@@ -101,12 +112,24 @@ APP_PASSWORD=
   manual "enter a Program Id" field instead — the app works fine without
   it.
 - `APP_PASSWORD` — optional. If set, everyone must enter this password
-  once per device before using the app. It's a single shared password
-  behind an in-memory session token — enough to keep casual passersby off
-  a laptop or an ngrok link at an event, not real security against a
-  determined attacker (no rate limiting, no hashing, and everyone's
-  logged out if the server restarts). Leave unset to disable the login
-  screen entirely.
+  once per device before using the app — there are no individual
+  accounts. Sessions last 12 hours and live in server memory, so
+  restarting the server signs everyone out. 3 wrong guesses from one
+  **device** trigger a 15-minute lockout for that device only. This is
+  keyed by a random id the browser generates and stores in localStorage
+  on first load — not by IP — because event staff are typically all on
+  the same venue WiFi, which NATs everyone to one public IP; an IP-only
+  lockout would let one person's typo lock out the whole event. (A MAC
+  address would sidestep that too, but a web server can never see one —
+  it's a link-layer detail stripped at the first router hop, invisible to
+  both servers and browsers.) A much looser per-IP backstop (20 attempts)
+  still catches a scripted flood that keeps inventing new device ids.
+  Leave `APP_PASSWORD` unset to disable the login screen entirely — the
+  client checks this via `/api/auth-status` before ever showing it. If
+  you deploy behind a reverse proxy (Replit, ngrok, etc.), `trust proxy`
+  is set to 1 hop in `server/src/index.js` — bump that number if you add
+  another proxy layer in front (e.g. a CDN), or the IP backstop can't
+  tell visitors apart.
 
 ## Run
 
@@ -186,6 +209,9 @@ anyone needing to manually refresh.
 - This is a single-server, self-hosted tool, not a hosted multi-tenant
   SaaS product — you run it yourself, and your Marketo credentials and
   attendee data never leave your own server.
+- The server sends `Content-Security-Policy: frame-ancestors 'none'` and
+  `X-Frame-Options: DENY` on every response, so the app can't be embedded
+  in a hidden iframe on another site and clickjacked.
 
 ## Contributing
 
