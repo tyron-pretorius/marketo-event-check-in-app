@@ -198,6 +198,14 @@ removes them from the app's list entirely (they have no "registered"
 state to fall back to) — if that walk-in was already synced, the Marketo
 lead created for them still exists and still shows Attended.
 
+The app is set up to push that correction, but Marketo itself may refuse
+it: on your program's channel (Admin > Tags/Channels), each status has a
+**Step** number, and Marketo won't move a Program Member backward to a
+lower step. If `Attended` has a higher step than `No Show`, undoing an
+Attended person and syncing again will fail to move them back to No Show
+— you can't demote someone once they've reached a later step. Check your
+channel's step ordering before relying on this correction path.
+
 **Can a few staff check people in on different devices at the same time?
 Will they see each other's updates so we don't check someone in twice?**
 Yes. All devices point at the same backend server and share one source
