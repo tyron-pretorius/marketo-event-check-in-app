@@ -322,6 +322,12 @@ input {
   color: #4a3900;
 }
 
+.badge--offline {
+  background: var(--warning);
+  color: #4a3900;
+  margin-left: 8px;
+}
+
 .person__actions {
   flex-shrink: 0;
 }

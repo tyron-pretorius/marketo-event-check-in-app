@@ -5,6 +5,12 @@ const CURRENT_PROGRAM_KEY = "wp-checkin-current-program";
 
 export class AuthError extends Error {}
 
+// Thrown when the request never reached the server at all (Wi-Fi drop,
+// DNS failure, connection refused) — as opposed to the server responding
+// with an error. Callers use this to decide what's safe to queue and
+// retry versus what's a real failure to surface immediately.
+export class NetworkError extends Error {}
+
 // A stable per-device id, generated once and kept in localStorage. Login
 // rate-limiting keys its tight 3-strikes lockout on this instead of IP —
 // event staff are typically all on one venue WiFi, which NATs everyone to
@@ -48,14 +54,22 @@ function setCurrentProgram(id, name) {
 
 async function request(path, options = {}) {
   const token = getToken();
-  const res = await fetch(`${BASE}${path}`, {
-    ...options,
-    headers: {
-      "Content-Type": "application/json",
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...(options.headers || {}),
-    },
-  });
+  let res;
+  try {
+    res = await fetch(`${BASE}${path}`, {
+      ...options,
+      headers: {
+        "Content-Type": "application/json",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...(options.headers || {}),
+      },
+    });
+  } catch (err) {
+    // fetch() itself throws (a plain TypeError) when the request never
+    // reached the server — connection dropped, DNS failed, etc. — as
+    // opposed to the server responding with an error status.
+    throw new NetworkError(err.message);
+  }
   const json = await res.json().catch(() => ({}));
   if (res.status === 401) {
     setToken(null);

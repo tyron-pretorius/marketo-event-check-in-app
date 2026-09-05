@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Fuse from "fuse.js";
-import { api, AuthError, getCurrentProgram } from "./api.js";
+import { api, AuthError, NetworkError, getCurrentProgram } from "./api.js";
+import { enqueue, getQueue, drainQueue } from "./offlineQueue.js";
 import PersonRow from "./components/PersonRow.jsx";
 import WalkInModal from "./components/WalkInModal.jsx";
 import SyncModal from "./components/SyncModal.jsx";
@@ -30,6 +31,7 @@ export default function App() {
   const [showPicker, setShowPicker] = useState(false);
   const [authed, setAuthed] = useState(null); // null = unknown yet, true/false once resolved
   const [toast, setToast] = useToast();
+  const [pendingCount, setPendingCount] = useState(() => getQueue().length);
 
   function handleError(err) {
     if (err instanceof AuthError) {
@@ -38,6 +40,28 @@ export default function App() {
       setToast(err.message);
     }
   }
+
+  // Replays anything queued while offline. Safe to call opportunistically
+  // (mount, the 'online' event, every poll tick) — it's a no-op with an
+  // empty queue, and stops at the first action that still can't reach the
+  // server rather than erroring.
+  async function attemptDrain() {
+    const remaining = await drainQueue();
+    setPendingCount((prev) => {
+      if (remaining < prev) refresh().catch(() => {});
+      return remaining;
+    });
+  }
+
+  // Registered once (empty deps), so this closure's `refresh` always
+  // resolves the program id via getCurrentProgram()'s live localStorage
+  // read rather than the `state` this closure captured at mount — that's
+  // what makes it safe to never re-subscribe as the event changes.
+  useEffect(() => {
+    window.addEventListener("online", attemptDrain);
+    attemptDrain();
+    return () => window.removeEventListener("online", attemptDrain);
+  }, []);
 
   // Which event this refreshes is always explicit — never a shared
   // server-side "active" program. Falls back to whatever program this
@@ -75,6 +99,10 @@ export default function App() {
 
     let cancelled = false;
     const interval = setInterval(async () => {
+      // The 'online' event isn't reliable on flaky Wi-Fi that never fully
+      // drops the OS-level connection, so every poll tick also gets a
+      // chance to drain anything still queued from an earlier failure.
+      await attemptDrain();
       try {
         const s = await api.getState(state.programId);
         if (!cancelled) setState(s);
@@ -134,31 +162,110 @@ export default function App() {
     }
   }
 
+  // Applies a mutation to the local person list immediately, without
+  // waiting for the server — so a tap still shows up on this device's
+  // screen even when the request behind it is offline and queued.
+  function applyLocally(mutate) {
+    setState((prev) => (prev ? mutate(prev) : prev));
+  }
+
+  // Only mutates the local list once a NetworkError confirms the request
+  // never reached the server — applying it eagerly for every error would
+  // leave the UI showing success for a genuine rejection too, uncorrected
+  // until the next poll happens to run.
   async function handleCheckIn(id) {
+    const programId = state.programId;
     try {
-      await api.checkIn(id, state.programId);
+      await api.checkIn(id, programId);
       await refresh();
     } catch (err) {
-      handleError(err);
+      if (err instanceof NetworkError) {
+        applyLocally((prev) => {
+          const person = prev.people[id];
+          if (!person) return prev;
+          return { ...prev, people: { ...prev.people, [id]: { ...person, status: "checked-in", checkedInAt: new Date().toISOString() } } };
+        });
+        enqueue({ type: "checkin", personId: id, programId });
+        setPendingCount(getQueue().length);
+        setToast("Offline — check-in saved, will sync once back online");
+      } else {
+        handleError(err);
+      }
     }
   }
 
   async function handleUndo(id) {
+    const programId = state.programId;
+    const person = state.people[id];
     try {
-      await api.undoCheckIn(id, state.programId);
+      await api.undoCheckIn(id, programId);
       await refresh();
     } catch (err) {
-      handleError(err);
+      if (err instanceof NetworkError) {
+        applyLocally((prev) => {
+          if (person?.source === "walkin") {
+            const people = { ...prev.people };
+            delete people[id];
+            return { ...prev, people };
+          }
+          return { ...prev, people: { ...prev.people, [id]: { ...prev.people[id], status: "registered", checkedInAt: null } } };
+        });
+        enqueue({ type: "undo", personId: id, programId });
+        setPendingCount(getQueue().length);
+        setToast("Offline — undo saved, will sync once back online");
+      } else {
+        handleError(err);
+      }
     }
   }
 
+  // WalkInModal wraps this call in its own try/catch and stays open to show
+  // a genuine rejection (e.g. a real duplicate) inline with the form intact
+  // — so a non-network error must be rethrown, not swallowed here. Only a
+  // NetworkError gets the optimistic-apply-and-queue treatment, since only
+  // then do we know the request never reached the server to be rejected.
   async function handleWalkIn(form) {
-    await api.addWalkIn(form, state.programId);
-    await refresh();
-    setShowWalkIn(false);
-    setToast(`${form.firstName || form.email} checked in`);
+    const programId = state.programId;
+    try {
+      await api.addWalkIn(form, programId);
+      await refresh();
+      setShowWalkIn(false);
+      setToast(`${form.firstName || form.email} checked in`);
+    } catch (err) {
+      if (!(err instanceof NetworkError)) throw err;
+
+      const key = `walkin:${form.email.trim().toLowerCase()}`;
+      applyLocally((prev) => ({
+        ...prev,
+        people: {
+          ...prev.people,
+          [key]: {
+            id: key,
+            marketoId: null,
+            firstName: form.firstName || "",
+            lastName: form.lastName || "",
+            email: form.email.trim(),
+            company: form.company || "",
+            title: "",
+            source: "walkin",
+            status: "checked-in",
+            checkedInAt: new Date().toISOString(),
+            synced: false,
+            syncStatus: null,
+          },
+        },
+      }));
+      enqueue({ type: "walkin", person: form, programId });
+      setPendingCount(getQueue().length);
+      setShowWalkIn(false);
+      setToast("Offline — check-in saved, will sync once back online");
+    }
   }
 
+  // Sync is never queued for later like check-ins/undos are — it's a
+  // deliberate, one-time push to Marketo that a staff member watches the
+  // result of, not something that should run silently once connectivity
+  // happens to come back without anyone knowing whether it did.
   async function handleSyncConfirm() {
     setSyncing(true);
     try {
@@ -166,7 +273,11 @@ export default function App() {
       setSyncResult(res.results);
       setState(res.state);
     } catch (err) {
-      handleError(err);
+      if (err instanceof NetworkError) {
+        setToast("Can't sync while offline — check your connection and try again");
+      } else {
+        handleError(err);
+      }
       setShowSync(false);
     } finally {
       setSyncing(false);
@@ -212,6 +323,11 @@ export default function App() {
           >
             <div className="header__event-name">
               {state?.programName || (state?.programId ? `Program ${state.programId}` : "No event loaded")}
+              {pendingCount > 0 && (
+                <span className="badge badge--offline">
+                  {pendingCount} pending offline
+                </span>
+              )}
             </div>
             <div className="header__event-sub">
               {state?.lastPulledAt

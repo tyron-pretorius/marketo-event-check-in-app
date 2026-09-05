@@ -81,6 +81,23 @@ progress back up automatically. Safe to delete `server/data/` entirely
 to start over (or use `POST /api/state/reset` with a `programId` to
 clear just that one event).
 
+## Working offline
+
+Venue Wi-Fi can drop mid-event. If a check-in, undo, or walk-in can't
+reach the server, the app doesn't just fail and forget it — it shows up
+on that device immediately, gets held in that device's local queue, and
+is automatically replayed the moment the connection comes back (checked
+every few seconds, not just on the browser's own "back online" signal,
+since flaky Wi-Fi doesn't always trigger one). A small "N pending
+offline" badge in the header shows whenever anything is still waiting to
+sync. Nothing already saved is ever lost — this only covers the gap
+between a tap and the request actually reaching the server.
+
+Sync to Marketo is the one exception — it's a deliberate, one-time push
+you watch the result of, so it's never queued for silent retry. If
+you're offline when you try to sync, you'll get a clear "can't sync
+while offline" message instead.
+
 ## Setup
 
 ```bash
