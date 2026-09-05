@@ -47,7 +47,13 @@ Tap the event name in the header at any time to reopen the event picker
 and switch to a different event.
 
 Both the event picker and the people search (across either tab) use fuzzy
-matching (Fuse.js), so a typo like "Chenn" still finds "Chen".
+matching (Fuse.js) rather than exact substring matching. At a busy check-in
+desk, staff are typing fast, glancing at a badge or hearing a name spoken
+once, and phone keyboards make typos easy — a search for "Chenn" or
+"Jonathon" still finds "Chen" or "Jonathan" instead of coming back empty,
+so a mistyped guess doesn't cost a line the time to correct it and retype.
+The same matching applies to finding the right event in the picker, where
+a program name might be remembered slightly wrong.
 
 ## Multi-device use
 
