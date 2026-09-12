@@ -93,7 +93,23 @@ router.post("/pull", async (req, res) => {
       // another event's people (registered or checked-in) along with it.
       const state = loadEventState(programId);
       state.programId = String(programId);
-      if (req.body?.programName) state.programName = req.body.programName;
+
+      // Resolved fresh from Marketo on every pull rather than trusted from
+      // the request body — a device only ever knows a program's name from
+      // its own local state, so if that cache is ever empty (a reset local
+      // store, or a device that's never loaded this program by name), the
+      // header would be stuck showing "Program {id}" forever, since a
+      // re-pull had no way to recover a name it didn't already have. This
+      // also keeps the name in sync if the program itself gets renamed.
+      try {
+        const program = await marketo.getProgramById(programId);
+        if (program?.name) state.programName = program.name;
+      } catch {
+        // A lookup hiccup shouldn't blank out an already-good name — fall
+        // back to whatever the client sent, or leave the existing one.
+        if (req.body?.programName) state.programName = req.body.programName;
+      }
+
       state.lastPulledAt = timestamp();
 
       const registeredIds = new Set(members.map((m) => String(m.id)));
@@ -257,6 +273,15 @@ router.post("/sync", async (req, res) => {
     const people = Object.values(state.people);
     const results = { attended: [], noShow: [], failed: [] };
 
+    // Every individual rejection below is also logged server-side (not
+    // just recorded on the person/results) — a sync that otherwise
+    // completes normally previously left no trace of *why* a handful of
+    // people failed, only a count in the UI that vanished once the modal
+    // closed. This is what makes that reason greppable afterward.
+    function logSyncFailure(email, error) {
+      console.error(`[sync:${programId}] failed for ${email || "(unmatched)"}: ${error}`);
+    }
+
     try {
       // 1. Resolve walk-ins to real Marketo lead ids (create if needed).
       const walkins = people.filter((p) => p.source === "walkin" && !p.marketoId);
@@ -277,40 +302,58 @@ router.post("/sync", async (req, res) => {
         } catch (err) {
           person.syncStatus = `error: ${err.message}`;
           results.failed.push({ email: person.email, error: err.message });
+          logSyncFailure(person.email, err.message);
         }
       }
 
-      const attendedIds = Object.values(state.people)
-        .filter((p) => p.status === "checked-in" && p.marketoId && !p.syncStatus?.startsWith("error"))
-        .map((p) => p.marketoId);
+      const attendedGroup = Object.values(state.people)
+        .filter((p) => p.status === "checked-in" && p.marketoId && !p.syncStatus?.startsWith("error"));
+      const noShowGroup = Object.values(state.people)
+        .filter((p) => p.status === "registered" && p.source === "registered" && p.marketoId);
 
-      const noShowIds = Object.values(state.people)
-        .filter((p) => p.status === "registered" && p.source === "registered" && p.marketoId)
-        .map((p) => p.marketoId);
+      // Marketo reports per-lead rejections inside an otherwise-200/success
+      // response — the call not throwing never meant every lead in the
+      // batch actually changed status. This used to go unchecked entirely,
+      // so a handful of rejected leads were silently counted as synced.
+      async function applyStatusChange(group, status, resultsBucket) {
+        if (!group.length) return;
+        const response = await marketo.changeProgramStatus(programId, group.map((p) => p.marketoId), status);
+        const rejections = new Map();
+        for (const item of response.result || []) {
+          const reason = item.reasons?.[0];
+          // Code 1037 ("already in or past this status") isn't a real
+          // failure — a re-sync resends the whole current group every
+          // time (so it can self-heal any drift), which means anyone
+          // already at this status gets this exact "skip" on every
+          // subsequent sync. Only other rejection codes are genuine.
+          if (reason?.code === "1037") continue;
+          if (item.status === "skipped" || item.reasons?.length) {
+            rejections.set(item.id, reason?.message || "rejected by Marketo");
+          }
+        }
 
-      if (attendedIds.length) {
-        await marketo.changeProgramStatus(programId, attendedIds, attendedStatus);
-      }
-      if (noShowIds.length) {
-        await marketo.changeProgramStatus(programId, noShowIds, noShowStatus);
-      }
-
-      for (const person of Object.values(state.people)) {
-        if (attendedIds.includes(person.marketoId)) {
-          person.synced = true;
-          person.syncStatus = attendedStatus;
-          results.attended.push(person.email);
-        } else if (noShowIds.includes(person.marketoId)) {
-          person.synced = true;
-          person.syncStatus = noShowStatus;
-          results.noShow.push(person.email);
+        for (const person of group) {
+          const reason = rejections.get(person.marketoId);
+          if (reason) {
+            person.syncStatus = `error: ${reason}`;
+            results.failed.push({ email: person.email, error: reason });
+            logSyncFailure(person.email, reason);
+          } else {
+            person.synced = true;
+            person.syncStatus = status;
+            resultsBucket.push(person.email);
+          }
         }
       }
+
+      await applyStatusChange(attendedGroup, attendedStatus, results.attended);
+      await applyStatusChange(noShowGroup, noShowStatus, results.noShow);
 
       state.lastSyncedAt = timestamp();
       saveEventState(state);
       return { status: 200, body: { results, state } };
     } catch (err) {
+      logSyncFailure(null, err.message);
       saveEventState(state);
       return { status: 400, body: { error: err.message, partialResults: results } };
     }
